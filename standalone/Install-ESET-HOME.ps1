@@ -82,16 +82,42 @@ function Test-IsAdmin {
     ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+function Get-ESETUninstallEntries {
+    # Read uninstall registry keys WITHOUT Get-ItemProperty, which throws
+    # "Specified cast is not valid" (InvalidCastException) on registry values
+    # with unusual types (REG_NONE etc.) that exist on some machines. The
+    # RegistryKey.GetValue() method returns raw objects and never casts.
+    $entries = @()
+    $bases = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall"
+    )
+    foreach ($base in $bases) {
+        $subkeys = Get-ChildItem -Path $base -ErrorAction SilentlyContinue
+        foreach ($sub in $subkeys) {
+            if ($sub.PSChildName -notmatch '^\{[0-9A-Fa-f-]+\}$') { continue }
+            try {
+                $displayName = $sub.GetValue("DisplayName")
+                $publisher   = $sub.GetValue("Publisher")
+            } catch {
+                continue
+            }
+            if ($displayName -like "ESET*" -and $publisher -like "*ESET*") {
+                $entries += [pscustomobject]@{
+                    DisplayName = [string]$displayName
+                    PSChildName = $sub.PSChildName
+                }
+            }
+        }
+    }
+    return $entries
+}
+
 # Uninstall every installed ESET home product found, via ESET's own callmsi.exe
 # (the vendor wrapper around msiexec). Aborts on failure: installing over a
 # half-removed ESET is worse than stopping.
 function Remove-ExistingESET {
-    $uninstallPaths = @(
-        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
-        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
-    )
-    $entries = Get-ItemProperty $uninstallPaths -ErrorAction SilentlyContinue |
-        Where-Object { $_.DisplayName -like "ESET*" -and $_.Publisher -like "*ESET*" -and $_.PSChildName -match '^\{[0-9A-Fa-f-]+\}$' }
+    $entries = Get-ESETUninstallEntries
 
     if (-not $entries) {
         Write-Host ""
@@ -188,7 +214,7 @@ try {
             exit 0
         }
         Write-Log "Existing ESET product detected - uninstalling it before installing $ProductName."
-        Remove-ExistingESET
+        Remove-ExistingESET | Out-Null
         Write-Log "Proceeding with fresh install of $ProductName."
         Write-Host ""
         Write-Host "If the removed copy was activated with a license, re-enter that key at the" -ForegroundColor Yellow
