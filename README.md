@@ -35,6 +35,33 @@ $LicenseKey = "XXXX-XXXX-XXXX-XXXX-XXXX"
 
 > **Verify before fleet push.** ESET no longer publicly documents the key-at-install switch for current home bootstrappers, so the exact property name can vary by build. Test on one machine first: run the downloaded exe manually with `--help` (or `/?`), check what your build accepts, and adjust `$LicenseArg` in the script if needed. Exit code `0` alone does **not** prove the key activated - confirm in the product UI or in the `ecmd /getstatus` log output. The key is never written to the log in plaintext.
 
+## Standalone version (no AEM)
+
+Need to install on a machine you're sitting at, without Splashtop AEM? Use the `standalone/` folder:
+
+```
+standalone/
+  Install-ESET-HOME-Ultimate.cmd    <- double-click (ESET Security Ultimate)
+  Install-ESET-HOME-Essential.cmd   <- double-click (ESET NOD32 Antivirus)
+  Install-ESET-HOME.ps1             <- shared logic behind both launchers
+```
+
+What's different from the AEM scripts:
+
+- **Self-elevating** - one UAC prompt, then it runs as admin. No need to right-click "Run as administrator".
+- **Interactive key prompt** - you're asked for the license key in the console; press Enter with no key to install unactivated (activate later in ESET HOME).
+- **Human-friendly output** - colored status lines and a "Press Enter to close" pause so the window doesn't vanish. Add `-NoPause` to skip that.
+- Same download/install/verify logic, same idempotent re-run behavior, same exit codes. Logs to `C:\Windows\Temp\ESETDeploy\eset_standalone_<product>_install.log`.
+
+Direct usage:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\standalone\Install-ESET-HOME.ps1 -Product Ultimate
+powershell -ExecutionPolicy Bypass -File .\standalone\Install-ESET-HOME.ps1 -Product Essential -LicenseKey ABCD-EFGH-IJKL-MNOP-QRST
+```
+
+The same key-at-install caveat applies as above: verify `$LicenseArg` against your build before trusting a fleet of manual installs.
+
 ## Deployment checklist (Splashtop AEM)
 
 - Task type: Script Task (PowerShell)
