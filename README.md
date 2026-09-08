@@ -13,7 +13,7 @@ Both download from ESET's official "latest" offline-installer URLs (verified liv
 
 ## How it works
 
-1. **Converge** - if any ESET home product is already installed, the script uninstalls it first via ESET's own `callmsi.exe` (the vendor wrapper around msiexec, `callmsi.exe /x {product-code} /qb! REBOOT=ReallySuppress`), waits for removal to clear, then proceeds. A re-run always ends on whatever version this script deploys - no "already installed, skip" behavior. If no product code can be found for the detected install, the script aborts rather than install over a half-removed ESET.
+1. **Converge** - if any ESET home product is already installed, the script uninstalls it first, then proceeds. A re-run always ends on whatever version this script deploys - no "already installed, skip" behavior. Uninstall uses ESET's own `callmsi.exe` when found (searched in the product's install location and every ESET folder under Program Files), falling back to the standard `msiexec /x {product-code} /qb! REBOOT=ReallySuppress` uninstall. If no product code can be found for the detected install, the script aborts rather than install over a half-removed ESET.
 2. **Download** - grabs the current offline installer (TLS 1.2 pinned, size-checked so a truncated file is never executed).
 3. **Install** - runs silently as SYSTEM.
 4. **Verify** - logs post-install status via `ecmd /getstatus` (informational).

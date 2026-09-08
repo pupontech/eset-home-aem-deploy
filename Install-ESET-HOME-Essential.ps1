@@ -17,8 +17,11 @@
       log line "installer accepted arguments" in TEST-CHECKLIST.txt. Adjust $LicenseArg to
       match whatever your build accepts; the script logs the full command it ran.
     - EXISTING ESET: if any ESET home product is already installed, the script first
-      uninstalls it (via ESET's own callmsi.exe) and then installs the pushed product,
-      so a re-run always converges to whatever version this script is deploying.
+      uninstalls it and then installs the pushed product, so a re-run always
+      converges to whatever version this script is deploying. Uninstall uses ESET's
+      own callmsi.exe when found (searched in the product's install location and
+      every ESET folder under Program Files); if absent it falls back to the
+      standard msiexec /x uninstall of the registered MSI product code.
     - Exit codes: 0 = success (installed, or 3010 reboot-required).
       Non-zero = failure (surfaces in AEM task status).
     - Log: C:\Windows\Temp\ESETDeploy\eset_essential_install.log
@@ -73,8 +76,9 @@ function Get-ESETUninstallEntries {
             }
             if ($displayName -like "ESET*" -and $publisher -like "*ESET*") {
                 $entries += [pscustomobject]@{
-                    DisplayName = [string]$displayName
-                    PSChildName = $sub.PSChildName
+                    DisplayName    = [string]$displayName
+                    PSChildName    = $sub.PSChildName
+                    InstallLocation = $sub.GetValue("InstallLocation")
                 }
             }
         }
@@ -100,16 +104,38 @@ function Remove-ExistingESET {
         $displayName = $entry.DisplayName
         Write-Log "Uninstalling existing $displayName ($productCode)..."
 
-        $callmsi = "C:\Program Files\ESET\ESET Security\callmsi.exe"
-        if (-not (Test-Path $callmsi)) {
-            $callmsi = "C:\Program Files (x86)\ESET\ESET Security\callmsi.exe"
+        # Locate ESET's callmsi.exe (its own msiexec wrapper): check the
+        # product's InstallLocation and every ESET folder under Program Files,
+        # not just one hardcoded path - the folder name varies by product/era.
+        $callmsi = $null
+        $searchDirs = @(
+            "C:\Program Files\ESET",
+            "C:\Program Files (x86)\ESET"
+        )
+        if ($entry.InstallLocation) {
+            $searchDirs += $entry.InstallLocation
         }
-        if (-not (Test-Path $callmsi)) {
-            Write-Log "ERROR: callmsi.exe not found; cannot cleanly uninstall existing ESET. Aborting."
-            exit 1
+        foreach ($dir in $searchDirs) {
+            if (Test-Path $dir) {
+                $found = Get-ChildItem -Path $dir -Recurse -Filter "callmsi.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($found) {
+                    $callmsi = $found.FullName
+                    break
+                }
+            }
         }
 
-        $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        if ($callmsi) {
+            Write-Log "Uninstalling via ESET callmsi.exe: $callmsi"
+            $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        } else {
+            # Fallback: callmsi is itself a wrapper around msiexec; /x with the
+            # registered MSI product code performs the same standard uninstall.
+            Write-Log "callmsi.exe not found; falling back to msiexec /x for the registered product code."
+            $msiexec = Join-Path $env:windir "System32\msiexec.exe"
+            $p = Start-Process -FilePath $msiexec -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        }
         $code = $p.ExitCode
         # 0 = success, 3010 = success+reboot needed, 1605 = already gone
         if ($code -in 0, 3010, 1605) {

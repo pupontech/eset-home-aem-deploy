@@ -27,9 +27,12 @@
     - Requires elevation; the script re-launches itself as administrator
       if it isn't already (a UAC prompt appears once).
     - EXISTING ESET: if any ESET home product is already installed, the
-      script asks for confirmation, uninstalls it (via ESET's own
-      callmsi.exe), then installs the chosen product - so re-runs always
-      converge to whatever version this script installs.
+      script asks for confirmation, uninstalls it, then installs the chosen
+      product - so re-runs always converge to whatever version this script
+      installs. Uninstall uses ESET's own callmsi.exe when found (searched in
+      the product's install location and every ESET folder under Program
+      Files); if absent it falls back to the standard msiexec /x uninstall of
+      the registered MSI product code.
     - Exit codes: 0 = success (installed, cancelled, or 3010 reboot-
       required). Non-zero = failure.
     - Log: C:\Windows\Temp\ESETDeploy\eset_standalone_<product>_install.log
@@ -104,8 +107,9 @@ function Get-ESETUninstallEntries {
             }
             if ($displayName -like "ESET*" -and $publisher -like "*ESET*") {
                 $entries += [pscustomobject]@{
-                    DisplayName = [string]$displayName
-                    PSChildName = $sub.PSChildName
+                    DisplayName    = [string]$displayName
+                    PSChildName    = $sub.PSChildName
+                    InstallLocation = $sub.GetValue("InstallLocation")
                 }
             }
         }
@@ -134,17 +138,38 @@ function Remove-ExistingESET {
         Write-Host ""
         Write-Host "Uninstalling $displayName..." -ForegroundColor Yellow
 
-        $callmsi = "C:\Program Files\ESET\ESET Security\callmsi.exe"
-        if (-not (Test-Path $callmsi)) {
-            $callmsi = "C:\Program Files (x86)\ESET\ESET Security\callmsi.exe"
+        # Locate ESET's callmsi.exe (its own msiexec wrapper): check the
+        # product's InstallLocation and every ESET folder under Program Files,
+        # not just one hardcoded path - the folder name varies by product/era.
+        $callmsi = $null
+        $searchDirs = @(
+            "C:\Program Files\ESET",
+            "C:\Program Files (x86)\ESET"
+        )
+        if ($entry.InstallLocation) {
+            $searchDirs += $entry.InstallLocation
         }
-        if (-not (Test-Path $callmsi)) {
-            Write-Host "callmsi.exe not found; cannot cleanly uninstall ESET." -ForegroundColor Red
-            if (-not $NoPause) { Read-Host "Press Enter to close" }
-            exit 1
+        foreach ($dir in $searchDirs) {
+            if (Test-Path $dir) {
+                $found = Get-ChildItem -Path $dir -Recurse -Filter "callmsi.exe" -ErrorAction SilentlyContinue |
+                    Select-Object -First 1
+                if ($found) {
+                    $callmsi = $found.FullName
+                    break
+                }
+            }
         }
 
-        $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        if ($callmsi) {
+            Write-Host "Uninstalling via ESET callmsi.exe: $callmsi" -ForegroundColor DarkGray
+            $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        } else {
+            # Fallback: callmsi is itself a wrapper around msiexec; /x with the
+            # registered MSI product code performs the same standard uninstall.
+            Write-Host "callmsi.exe not found; falling back to msiexec /x for the registered product code." -ForegroundColor Yellow
+            $msiexec = Join-Path $env:windir "System32\msiexec.exe"
+            $p = Start-Process -FilePath $msiexec -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        }
         $code = $p.ExitCode
         # 0 = success, 3010 = success+reboot needed, 1605 = already gone
         if ($code -in 0, 3010, 1605) {
