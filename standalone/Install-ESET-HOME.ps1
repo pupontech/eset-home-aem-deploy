@@ -26,9 +26,12 @@
 .NOTES
     - Requires elevation; the script re-launches itself as administrator
       if it isn't already (a UAC prompt appears once).
-    - Idempotent: if ESET is already installed it reports that and exits 0.
-    - Exit codes: 0 = success (installed, already installed, or 3010
-      reboot-required). Non-zero = failure.
+    - EXISTING ESET: if any ESET home product is already installed, the
+      script asks for confirmation, uninstalls it (via ESET's own
+      callmsi.exe), then installs the chosen product - so re-runs always
+      converge to whatever version this script installs.
+    - Exit codes: 0 = success (installed, cancelled, or 3010 reboot-
+      required). Non-zero = failure.
     - Log: C:\Windows\Temp\ESETDeploy\eset_standalone_<product>_install.log
 #>
 
@@ -79,6 +82,70 @@ function Test-IsAdmin {
     ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
 }
 
+# Uninstall every installed ESET home product found, via ESET's own callmsi.exe
+# (the vendor wrapper around msiexec). Aborts on failure: installing over a
+# half-removed ESET is worse than stopping.
+function Remove-ExistingESET {
+    $uninstallPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    $entries = Get-ItemProperty $uninstallPaths -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like "ESET*" -and $_.Publisher -like "*ESET*" -and $_.PSChildName -match '^\{[0-9A-Fa-f-]+\}$' }
+
+    if (-not $entries) {
+        Write-Host ""
+        Write-Host "An ESET install was detected but no MSI product code was found in the" -ForegroundColor Red
+        Write-Host "registry, so it cannot be uninstalled cleanly. Aborting to avoid installing" -ForegroundColor Red
+        Write-Host "over it. Uninstall ESET manually first, then run this again." -ForegroundColor Red
+        if (-not $NoPause) { Read-Host "Press Enter to close" }
+        exit 1
+    }
+
+    foreach ($entry in $entries) {
+        $productCode = $entry.PSChildName
+        $displayName = $entry.DisplayName
+        Write-Host ""
+        Write-Host "Uninstalling $displayName..." -ForegroundColor Yellow
+
+        $callmsi = "C:\Program Files\ESET\ESET Security\callmsi.exe"
+        if (-not (Test-Path $callmsi)) {
+            $callmsi = "C:\Program Files (x86)\ESET\ESET Security\callmsi.exe"
+        }
+        if (-not (Test-Path $callmsi)) {
+            Write-Host "callmsi.exe not found; cannot cleanly uninstall ESET." -ForegroundColor Red
+            if (-not $NoPause) { Read-Host "Press Enter to close" }
+            exit 1
+        }
+
+        $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        $code = $p.ExitCode
+        # 0 = success, 3010 = success+reboot needed, 1605 = already gone
+        if ($code -in 0, 3010, 1605) {
+            Write-Host "Removed $displayName (exit $code)." -ForegroundColor Green
+        } else {
+            Write-Host "Uninstall of $displayName failed with exit code $code." -ForegroundColor Red
+            Write-Host "Aborting to avoid installing over it." -ForegroundColor Red
+            if (-not $NoPause) { Read-Host "Press Enter to close" }
+            exit $code
+        }
+    }
+
+    # Give the removal a moment to fully clear services/files before reinstalling.
+    $deadline = (Get-Date).AddSeconds(60)
+    $stillThere = $true
+    while ($stillThere -and (Get-Date) -lt $deadline) {
+        $stillThere = [bool](Get-Service -Name "ekrn*" -ErrorAction SilentlyContinue) -or
+                      (Test-Path "C:\Program Files\ESET\ESET Security\ekrn.exe")
+        if ($stillThere) { Start-Sleep -Seconds 5 }
+    }
+    if ($stillThere) {
+        Write-Log "WARNING: ESET services still present after uninstall (may clear on reboot). Continuing."
+    } else {
+        Write-Log "ESET removal confirmed: no ekrn service remaining."
+    }
+}
+
 try {
     # --- Self-elevate if needed ---
     if (-not (Test-IsAdmin)) {
@@ -106,20 +173,29 @@ try {
     Write-Host "================================================" -ForegroundColor Cyan
     Write-Log "=== $ProductName standalone deployment started ==="
 
-    # --- Already installed? Report and exit 0 (idempotent re-run) ---
+    # --- Existing ESET? Ask, then uninstall before installing the chosen product ---
     $alreadyInstalled = (Test-Path "C:\Program Files\ESET\ESET Security\ecmd.exe") -or `
                         [bool](Get-Service -Name "ekrn*" -ErrorAction SilentlyContinue)
     if ($alreadyInstalled) {
-        Write-Log "ESET is already installed on this machine - nothing to do."
         Write-Host ""
-        Write-Host "ESET is already installed on this machine." -ForegroundColor Green
-        Write-Host "If it is not yet activated, add the key in ESET HOME (login.eset.com)" -ForegroundColor Yellow
-        Write-Host "or in the product UI (Help and support -> Change license)." -ForegroundColor Yellow
+        Write-Host "An existing ESET product was found on this machine." -ForegroundColor Yellow
+        Write-Host "It will be uninstalled first, then $ProductName installed." -ForegroundColor Yellow
+        $confirm = Read-Host "Uninstall existing ESET and continue? (Y/N)"
+        if ($confirm.Trim() -notin @("Y", "y", "YES", "Yes", "yes")) {
+            Write-Host ""
+            Write-Host "Cancelled - no changes made." -ForegroundColor Green
+            if (-not $NoPause) { Read-Host "Press Enter to close" }
+            exit 0
+        }
+        Write-Log "Existing ESET product detected - uninstalling it before installing $ProductName."
+        Remove-ExistingESET
+        Write-Log "Proceeding with fresh install of $ProductName."
         Write-Host ""
-        Write-Host "Result: ESET already installed - no changes made." -ForegroundColor Green
-        Write-Host "Log: $LogFile"
-        if (-not $NoPause) { Read-Host "Press Enter to close" }
-        exit 0
+        Write-Host "If the removed copy was activated with a license, re-enter that key at the" -ForegroundColor Yellow
+        Write-Host "next prompt (or activate again in ESET HOME) - activation does not survive" -ForegroundColor Yellow
+        Write-Host "an uninstall." -ForegroundColor Yellow
+    } else {
+        Write-Log "No existing ESET installation detected - proceeding with fresh install."
     }
 
     # --- License key: prompt if not given ---

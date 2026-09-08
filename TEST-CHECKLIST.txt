@@ -26,16 +26,21 @@ TEST A - FIRST RUN (option 1 or 2)
 [ ] A6 Service check: `sc query ekrn` shows RUNNING.
 [ ] A7 No plaintext license key appears anywhere in the log.
 
-TEST B - IDEMPOTENT RE-RUN (run the same option again)
+TEST B - CONVERGE RE-RUN (run the same option again)
 ------------------------------------------------------
-[ ] B1 Log says "ESET is already installed on this machine."
-[ ] B2 No new download happened (run finishes in seconds).
-[ ] B3 Exit code 0.
+[ ] B1 Log says "Existing ESET product detected - uninstalling it" and
+     shows the callmsi uninstall of the previous install (exit 0/3010/1605).
+[ ] B2 Log then shows "Proceeding with fresh install" and a new ~90 MB
+     download + install run.
+[ ] B3 Final exit code 0, log ends "Deployment finished successfully".
+[ ] B4 On a licensed machine: activation does NOT survive the uninstall -
+     re-apply the key (or re-activate in ESET HOME) and confirm in the UI.
 
-TEST C - BOTH SCRIPTS (option 3, optional)
-------------------------------------------
-[ ] C1 Second script detects the first product's install and exits 0
-     without installing a second ESET product.
+TEST C - CROSS-PRODUCT (option 3, optional)
+-------------------------------------------
+[ ] C1 Second script (Essential) finds the Ultimate install from the first
+     run, uninstalls it via callmsi, then installs Essential. Machine ends
+     with ONLY Essential - no two ESET products coexisting.
 
 TEST D - AEM REAL-WORLD (after A-C pass locally)
 ------------------------------------------------

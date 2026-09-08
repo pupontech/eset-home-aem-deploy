@@ -16,9 +16,10 @@
       run the downloaded exe once manually with --help (or /?) on a test VM and check the
       log line "installer accepted arguments" in TEST-CHECKLIST.txt. Adjust $LicenseArg to
       match whatever your build accepts; the script logs the full command it ran.
-    - Idempotent: if ESET is already installed, the script logs and exits 0 without
-      re-downloading or reinstalling.
-    - Exit codes: 0 = success (installed, already present, or 3010 reboot-required).
+    - EXISTING ESET: if any ESET home product is already installed, the script first
+      uninstalls it (via ESET's own callmsi.exe) and then installs the pushed product,
+      so a re-run always converges to whatever version this script is deploying.
+    - Exit codes: 0 = success (installed, or 3010 reboot-required).
       Non-zero = failure (surfaces in AEM task status).
     - Log: C:\Windows\Temp\ESETDeploy\eset_essential_install.log
 #>
@@ -50,6 +51,65 @@ function Write-Log {
     Write-Host "$timestamp - $Message"
 }
 
+# Uninstall every installed ESET home product found, via ESET's own callmsi.exe
+# (the vendor wrapper around msiexec). Aborts the script on failure: installing
+# over a half-removed ESET is worse than stopping. Only called when an ESET
+# install was detected, so "no product code found" is treated as fatal.
+function Remove-ExistingESET {
+    $uninstallPaths = @(
+        "HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*",
+        "HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*"
+    )
+    $entries = Get-ItemProperty $uninstallPaths -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like "ESET*" -and $_.Publisher -like "*ESET*" -and $_.PSChildName -match '^\{[0-9A-Fa-f-]+\}$' }
+
+    if (-not $entries) {
+        Write-Log "ERROR: ESET install detected but no MSI product code found in the registry;"
+        Write-Log "       cannot uninstall cleanly. Aborting to avoid installing over it."
+        exit 1
+    }
+
+    foreach ($entry in $entries) {
+        $productCode = $entry.PSChildName
+        $displayName = $entry.DisplayName
+        Write-Log "Uninstalling existing $displayName ($productCode)..."
+
+        $callmsi = "C:\Program Files\ESET\ESET Security\callmsi.exe"
+        if (-not (Test-Path $callmsi)) {
+            $callmsi = "C:\Program Files (x86)\ESET\ESET Security\callmsi.exe"
+        }
+        if (-not (Test-Path $callmsi)) {
+            Write-Log "ERROR: callmsi.exe not found; cannot cleanly uninstall existing ESET. Aborting."
+            exit 1
+        }
+
+        $p = Start-Process -FilePath $callmsi -ArgumentList @("/x", $productCode, "/qb!", "REBOOT=ReallySuppress") -Wait -PassThru -NoNewWindow
+        $code = $p.ExitCode
+        # 0 = success, 3010 = success+reboot needed, 1605 = already gone
+        if ($code -in 0, 3010, 1605) {
+            Write-Log "Uninstall of $displayName finished (exit $code)."
+        } else {
+            Write-Log "ERROR: uninstall of $displayName failed with exit code $code. Aborting to avoid installing over it."
+            exit $code
+        }
+    }
+
+    # Give the removal a moment to fully clear services/files before reinstalling.
+    $deadline = (Get-Date).AddSeconds(60)
+    $stillThere = $true
+    while ($stillThere -and (Get-Date) -lt $deadline) {
+        $stillThere = [bool](Get-Service -Name "ekrn*" -ErrorAction SilentlyContinue) -or
+                      (Test-Path "C:\Program Files\ESET\ESET Security\ekrn.exe")
+        if ($stillThere) { Start-Sleep -Seconds 5 }
+    }
+    if ($stillThere) {
+        Write-Log "WARNING: ESET services still present after uninstall (may clear on reboot). Continuing."
+    } else {
+        Write-Log "ESET removal confirmed: no ekrn service remaining."
+    }
+    return $true
+}
+
 try {
     if (-not (Test-Path $WorkDir)) {
         New-Item -Path $WorkDir -ItemType Directory -Force | Out-Null
@@ -57,13 +117,15 @@ try {
 
     Write-Log "=== $ProductName deployment started ==="
 
-    # --- Already installed? Detect and exit 0 (idempotent re-run) ---
+    # --- Existing ESET? Uninstall it first, then install whatever version is pushed ---
     $alreadyInstalled = (Test-Path "C:\Program Files\ESET\ESET Security\ecmd.exe") -or `
                         [bool](Get-Service -Name "ekrn*" -ErrorAction SilentlyContinue)
     if ($alreadyInstalled) {
-        Write-Log "ESET is already installed on this machine. Nothing to do."
-        Write-Log "=== Deployment finished successfully (already installed) ==="
-        exit 0
+        Write-Log "Existing ESET product detected - uninstalling it before installing $ProductName."
+        Remove-ExistingESET
+        Write-Log "Proceeding with fresh install of $ProductName."
+    } else {
+        Write-Log "No existing ESET installation detected - proceeding with fresh install."
     }
 
     # --- Download ---

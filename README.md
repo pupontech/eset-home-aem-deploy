@@ -13,11 +13,13 @@ Both download from ESET's official "latest" offline-installer URLs (verified liv
 
 ## How it works
 
-1. **Detect** - if ESET is already installed (`ecmd.exe` present or the `ekrn` service running), the script logs and exits `0` without downloading anything. Re-runs are safe and fast.
+1. **Converge** - if any ESET home product is already installed, the script uninstalls it first via ESET's own `callmsi.exe` (the vendor wrapper around msiexec, `callmsi.exe /x {product-code} /qb! REBOOT=ReallySuppress`), waits for removal to clear, then proceeds. A re-run always ends on whatever version this script deploys - no "already installed, skip" behavior. If no product code can be found for the detected install, the script aborts rather than install over a half-removed ESET.
 2. **Download** - grabs the current offline installer (TLS 1.2 pinned, size-checked so a truncated file is never executed).
 3. **Install** - runs silently as SYSTEM.
 4. **Verify** - logs post-install status via `ecmd /getstatus` (informational).
-5. Exit codes: `0` = success (installed, already installed, or `3010` reboot-required). Non-zero = failure, surfaced in AEM task status.
+5. Exit codes: `0` = success (installed or `3010` reboot-required). Non-zero = failure, surfaced in AEM task status.
+
+Note: uninstalling ESET drops its activation. After a converge run, the license must be re-applied (the script's key at install time, or re-activate in ESET HOME).
 
 Logs go to `C:\Windows\Temp\ESETDeploy\` (`eset_ultimate_install.log` / `eset_essential_install.log`).
 
@@ -50,8 +52,9 @@ What's different from the AEM scripts:
 
 - **Self-elevating** - one UAC prompt, then it runs as admin. No need to right-click "Run as administrator".
 - **Interactive key prompt** - you're asked for the license key in the console; press Enter with no key to install unactivated (activate later in ESET HOME).
+- **Existing ESET confirm** - if an ESET product is already installed you're asked "Uninstall existing ESET and continue? (Y/N)"; answering Y removes it via ESET's own `callmsi.exe` first, then installs the chosen product (converge behavior, same as the AEM scripts). N cancels with no changes.
 - **Human-friendly output** - colored status lines and a "Press Enter to close" pause so the window doesn't vanish. Add `-NoPause` to skip that.
-- Same download/install/verify logic, same idempotent re-run behavior, same exit codes. Logs to `C:\Windows\Temp\ESETDeploy\eset_standalone_<product>_install.log`.
+- Same download/install/verify logic, same converge behavior, same exit codes. Logs to `C:\Windows\Temp\ESETDeploy\eset_standalone_<product>_install.log`.
 
 Direct usage:
 
