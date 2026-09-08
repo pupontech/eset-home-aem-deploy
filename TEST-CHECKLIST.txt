@@ -28,19 +28,25 @@ TEST A - FIRST RUN (option 1 or 2)
 
 TEST B - CONVERGE RE-RUN (run the same option again)
 ------------------------------------------------------
-[ ] B1 Log says "Existing ESET product detected - uninstalling it" and
-     shows the callmsi uninstall of the previous install (exit 0/3010/1605).
-[ ] B2 Log then shows "Proceeding with fresh install" and a new ~90 MB
+[ ] B1 Log says "Existing ESET product detected - uninstalling it".
+[ ] B2 The uninstall line names the tool that actually ran - EITHER:
+       "Uninstalling via ESET callmsi.exe: <path>" OR (if your build has
+       no callmsi.exe) "callmsi.exe not found; falling back to msiexec /x"
+       - followed by "Uninstall of ... finished (exit 0/3010/1605)".
+       REPORT WHICH ONE RAN - both are valid, but the fallback is the
+       new path and is what machines without callmsi.exe need.
+[ ] B3 Log then shows "Proceeding with fresh install" and a new ~90 MB
      download + install run.
-[ ] B3 Final exit code 0, log ends "Deployment finished successfully".
-[ ] B4 On a licensed machine: activation does NOT survive the uninstall -
+[ ] B4 Final exit code 0, log ends "Deployment finished successfully".
+[ ] B5 On a licensed machine: activation does NOT survive the uninstall -
      re-apply the key (or re-activate in ESET HOME) and confirm in the UI.
 
 TEST C - CROSS-PRODUCT (option 3, optional)
 -------------------------------------------
 [ ] C1 Second script (Essential) finds the Ultimate install from the first
-     run, uninstalls it via callmsi, then installs Essential. Machine ends
-     with ONLY Essential - no two ESET products coexisting.
+     run, uninstalls it (callmsi or msiexec fallback), then installs
+     Essential. Machine ends with ONLY Essential - no two ESET products
+     coexisting.
 
 TEST D - AEM REAL-WORLD (after A-C pass locally)
 ------------------------------------------------
@@ -51,17 +57,32 @@ TEST D - AEM REAL-WORLD (after A-C pass locally)
 [ ] D3 Activate the device in ESET HOME (login.eset.com -> Add
      protection) and confirm the product UI shows the subscription.
 
+TEST E - STANDALONE (double-click .cmd from the standalone zip)
+---------------------------------------------------------------
+[ ] E1 Double-click Install-ESET-HOME-Ultimate.cmd - a UAC prompt
+     appears; click Yes.
+[ ] E2 If ESET is already installed, the Y/N uninstall confirmation
+     appears; answer N first to confirm clean cancel, then run again and
+     answer Y to test the uninstall+reinstall flow.
+[ ] E3 License key prompt appears; Enter with no key installs
+     unactivated; on a second run enter a real key and confirm
+     activation in the product UI.
+[ ] E4 Window stays open at the end ("Press Enter to close").
+
 FAIL TRIAGE
 -----------
 - Download fails / 146-byte file: URL changed again; check KB2885
-  (link in README-Notes.txt) and report back the new URL.
+  (link in README) and report back the new URL.
 - Installer exits non-zero quickly: run the downloaded exe manually
   from C:\Windows\Temp\ESETDeploy\ WITH --silent --accepteula to see
   the error; also try without the flags to watch the wizard and note
   where it stops (existing AV? EULA? language prompt?).
 - Install hangs: other AV present - remove it first (KB3419 lists
   prior-AV removal as a prerequisite; these scripts do NOT remove AV).
-- Reboots mid-run: 3010 path; re-run TEST-RUN.bat after reboot, Test B
-  behavior (already installed, exit 0) is the expected result.
+- Uninstall fails with a non-zero exit code OTHER than 0/3010/1605:
+  the script aborts before installing (by design). Report the exit
+  code and the product code it tried to remove.
+- Reboots mid-run: 3010 path; after reboot, re-run TEST-RUN.bat - the
+  converge flow (uninstall if present, then fresh install) is expected.
 
 Report results back with: which test, exit code, and the full log file.

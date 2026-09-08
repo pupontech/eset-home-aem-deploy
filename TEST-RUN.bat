@@ -34,9 +34,9 @@ goto end
 :both
 call :runone "Install-ESET-HOME-Ultimate.ps1" "eset_ultimate_install.log"
 echo.
-echo --- NOTE: second script should find ESET present, uninstall it, ---
-echo ---       then install Essential on top. Watch for the UAC-style ---
-echo ---       callmsi removal in the log. ---
+echo --- NOTE: second script should find ESET present, uninstall it ---
+echo ---       (callmsi.exe or msiexec fallback, per the log), then   ---
+echo ---       install Essential on top.                              ---
 echo.
 call :runone "Install-ESET-HOME-Essential.ps1" "eset_essential_install.log"
 goto end
