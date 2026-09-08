@@ -1,0 +1,62 @@
+ESET VM TEST CHECKLIST
+======================
+Run TEST-RUN.bat in an elevated CMD on the test VM, then tick each item.
+Expected: fresh Windows 10/11 x64 VM with no ESET installed.
+
+TEST A - FIRST RUN (option 1 or 2)
+----------------------------------
+[ ] A0 Set your real key into $LicenseKey in the script BEFORE the VM run
+     (to test key-at-install mode), or leave the XXXX placeholder (to
+     test portal-activation mode). Pick one per run.
+[ ] A1 Download line in log shows ~90 MB (9x,xxx,xxx bytes), not 146.
+     (146 bytes = URL 404'd; fail immediately and report.)
+[ ] A2 Installer runs silently: no wizard UI appears, no popups.
+[ ] A3 Exit code is 0 (or script logged "3010 ... reboot required",
+     also a pass).
+[ ] A4 Log ends with "Deployment finished successfully".
+[ ] A5 KEY-AT-INSTALL MODE: confirm activation actually landed - open the
+     ESET product UI (or read the ecmd /getstatus block in the log) and
+     check the subscription/activated state, not just exit code 0.
+     If the installer rejected the key switch, the log shows the HINT
+     line: run the exe from C:\Windows\Temp\ESETDeploy\ manually with
+     --help (or /?), find the accepted license parameter, and update
+     $LicenseArg in the script. Report what your build accepted.
+     PORTAL MODE: product showing UNACTIVATED / activate prompt is
+     EXPECTED - activation happens in the ESET HOME portal.
+[ ] A6 Service check: `sc query ekrn` shows RUNNING.
+[ ] A7 No plaintext license key appears anywhere in the log.
+
+TEST B - IDEMPOTENT RE-RUN (run the same option again)
+------------------------------------------------------
+[ ] B1 Log says "ESET is already installed on this machine."
+[ ] B2 No new download happened (run finishes in seconds).
+[ ] B3 Exit code 0.
+
+TEST C - BOTH SCRIPTS (option 3, optional)
+------------------------------------------
+[ ] C1 Second script detects the first product's install and exits 0
+     without installing a second ESET product.
+
+TEST D - AEM REAL-WORLD (after A-C pass locally)
+------------------------------------------------
+[ ] D1 Push via Splashtop AEM Script Task, run as SYSTEM, to ONE test
+     device; AEM task shows success.
+[ ] D2 Pull C:\Windows\Temp\ESETDeploy\*.log from the device and
+     confirm same lines as Test A.
+[ ] D3 Activate the device in ESET HOME (login.eset.com -> Add
+     protection) and confirm the product UI shows the subscription.
+
+FAIL TRIAGE
+-----------
+- Download fails / 146-byte file: URL changed again; check KB2885
+  (link in README-Notes.txt) and report back the new URL.
+- Installer exits non-zero quickly: run the downloaded exe manually
+  from C:\Windows\Temp\ESETDeploy\ WITH --silent --accepteula to see
+  the error; also try without the flags to watch the wizard and note
+  where it stops (existing AV? EULA? language prompt?).
+- Install hangs: other AV present - remove it first (KB3419 lists
+  prior-AV removal as a prerequisite; these scripts do NOT remove AV).
+- Reboots mid-run: 3010 path; re-run TEST-RUN.bat after reboot, Test B
+  behavior (already installed, exit 0) is the expected result.
+
+Report results back with: which test, exit code, and the full log file.
